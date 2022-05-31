@@ -1,256 +1,230 @@
+import datetime
+import os
+import pathlib
 import sys
+import time
 
-from PyQt5 import QtCore as qtc
-from PyQt5 import QtGui as qtg
-from PyQt5 import QtWidgets as qtw
+import numpy as np
+
+try:
+    from PySide6 import QtCore, QtGui, QtWidgets
+except ModuleNotFoundError:
+    from PyQt5 import QtCore, QtGui, QtWidgets
+
+import pyqtgraph as pg
+from pyqtgraph.console import ConsoleWidget
+from pyqtgraph.dockarea.Dock import Dock
+from pyqtgraph.dockarea.DockArea import DockArea
+from pyqtgraph.Qt import QtWidgets
 
 
-class ChoiceSpinBox(qtw.QSpinBox):
-    """A spinbox for selecting choices."""
+class FolderModel(QtWidgets.QFileSystemModel):
 
-    def __init__(self, choices, *args, **kwargs):
-        self.choices = choices
-        super().__init__(
-            *args,
-            maximum=len(self.choices) - 1,
-            minimum=0,
-            **kwargs
-        )
+    def __init__(self, parent=None, *args, **kwargs):
+        # * the QFileSystemModel has a rootPath that indicates the root
+        # from where the files will be monitored *and the views have a rootIndex that tells them which part of the model to show.
 
-    def valueFromText(self, text):
-        return self.choices.index(text)
+        super().__init__(parent=parent, *args, **kwargs)
+        self.setRootPath("c:/") # todo move outside to config
+        self.setFilter(QtCore.QDir.AllDirs | QtCore.QDir.NoDotAndDotDot)
 
-    def textFromValue(self, value):
-        try:
-            return self.choices[value]
-        except IndexError:
-            return '!Error!'
+        #! move this to folder proxyfilter
 
-    def validate(self, string, index):
-        if string in self.choices:
-            state = qtg.QValidator.Acceptable
-        elif any([v.startswith(string) for v in self.choices]):
-            state = qtg.QValidator.Intermediate
+
+class FileModel(QtWidgets.QFileSystemModel):
+
+    def __init__(self, parent=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.setFilter(QtCore.QDir.Files | QtCore.QDir.NoDotAndDotDot)
+        # TODO fix behavior: first click on folder shows files only - entering folder, leaving and re-clicking reveals directories
+
+
+class FolderFilterProxyModel(QtCore.QSortFilterProxyModel):
+
+    def __init__(self, parent=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.setSourceModel(FolderModel()) # todo move to controller
+
+        session_reg_exp = "[0-9]{0,10}_[0-9]{0,6}_[0-9]{0,8}"
+        # self.setFilterRegularExpression(QtCore.QRegularExpression(session_reg_exp))
+        # self.setFilterRegularExpression(session_reg_exp)
+        self.setFilterKeyColumn(0)
+        # auto applies filtering/sorting if source model changes
+        self.setDynamicSortFilter(True)
+        self.setRecursiveFilteringEnabled(True)
+        self.setFilterCaseSensitivity(QtCore.Qt.CaseInsensitive)
+
+
+class FileFilterProxyModel(QtCore.QSortFilterProxyModel):
+
+    def __init__(self, parent=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.setSourceModel(FileModel()) # todo move to controller
+        self.setSourceModel(FileModel()) # todo move to controller
+
+
+class FolderTreeView(QtWidgets.QTreeView):
+
+    def __init__(self, parent=None, label=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs) # t
+        self.label = "folder tree viewer"
+
+        self.expandToDepth(3)
+
+        # todo move some of this to controller
+        self.proxy = FolderFilterProxyModel()
+        self.setModel(self.proxy)
+        self.source = self.proxy.sourceModel()
+
+        root_idx = self.source.index(self.source.rootPath())
+        proxy_root_idx = self.proxy.mapFromSource(root_idx)
+        self.setRootIndex(proxy_root_idx)
+
+        self.setRootIsDecorated(True)
+        self.setUniformRowHeights(True) # this enables the view to do some optimizations
+
+        self.clipboard = QtGui.QGuiApplication.clipboard()
+        self.doubleClicked.connect(self.open_folder)
+
+    def selected_file_path(self, proxy_index):
+        file_index = self.proxy.mapToSource(proxy_index)
+        return pathlib.Path(self.source.filePath(file_index))
+
+    def copy_path_to_clipboard(self, proxy_index):
+        path = self.selected_file_path(proxy_index)
+        self.clipboard.setText(str(path))
+
+    def open_folder(self, proxy_index):
+        path = self.selected_file_path(proxy_index)
+        folder = path.absolute() if path.is_dir() else path.parent.absolute()
+        os.startfile(folder)
+
+
+class FolderSearchView(QtWidgets.QMainWindow):
+
+    def __init__(self, parent=None, label=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.label = "search/fileview/folderview"
+
+        self.add_widgets()
+
+    def add_widgets(self):
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+
+        self.FolderContentsView = item = FolderContentsView(parent=self)
+        item.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        layout.addWidget(item, stretch=0)
+
+        self.LineEdit = item = QtWidgets.QLineEdit(placeholderText="Enter mouseID", parent=self)
+        layout.addWidget(item)
+
+        self.FolderTreeView = item = FolderTreeView(parent=self)
+        item.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        layout.addWidget(item, stretch=1)
+
+        widget = QtWidgets.QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+
+        self.FolderTreeView.selectionModel().selectionChanged.connect(self.updateFiles)
+
+    def updateFiles(self, selected, deselected):
+        # we've filtered for only folders, so apply a selection to a separate filemodel for display
+        if len(selected) > 1:
+            proxyIndex = self.FolderTreeView.selectedIndexes()
         else:
-            state = qtg.QValidator.Invalid
-        return (state, string, index)
+            proxyIndex = self.FolderTreeView.currentIndex()
+
+        folderproxy = self.FolderTreeView.proxy
+        foldersource = self.FolderTreeView.source
+
+        sourceSelection = folderproxy.mapSelectionToSource(selected)
+        sourceIndex = folderproxy.mapToSource(proxyIndex)
+
+        fileproxy = self.FolderContentsView.proxy
+        filesource = self.FolderContentsView.source
+
+        #! for s in selection:
+        path = foldersource.fileInfo(sourceIndex).absoluteFilePath()
+
+        # root_idx = self.source.index(self.source.rootPath())
+        # proxy_root_idx = self.proxy.mapFromSource(root_idx)
+        # self.setRootIndex(proxy_root_idx)
+
+        r = filesource.setRootPath(path)
+        self.FolderContentsView.setRootIndex(fileproxy.mapFromSource(r))
+
+        # path = self.dirModel.fileInfo(index).absoluteFilePath()
+        # self.listview.setRootIndex(self.fileModel.setRootPath(path))
 
 
-class IPv4Validator(qtg.QValidator):
-    """Enforce entry of IPv4 Addresses"""
+class FolderContentsView(QtWidgets.QListView):
 
-    def validate(self, string, index):
-        octets = string.split('.')
-        if len(octets) > 4:
-            state = qtg.QValidator.Invalid
-        elif not all([x.isdigit() for x in octets if x != '']):
-            state = qtg.QValidator.Invalid
-        elif not all([0 <= int(x) <= 255 for x in octets if x != '']):
-            state = qtg.QValidator.Invalid
-        elif len(octets) < 4:
-            state = qtg.QValidator.Intermediate
-        elif any([x == '' for x in octets]):
-            state = qtg.QValidator.Intermediate
-        else:
-            state = qtg.QValidator.Acceptable
-        return (state, string, index)
+    def __init__(self, parent=None, label=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.label = "folder contents viewer"
+        self.model = FileFilterProxyModel()
+        self.setModel(self.model) # todo move to controller
+
+        # this enables the view to do some optimizations:
+        self.setUniformItemSizes(True)
+
+        # todo move some of this to controller
+        self.proxy = FileFilterProxyModel()
+        self.setModel(self.proxy)
+        self.source = self.proxy.sourceModel()
 
 
-class MainWindow(qtw.QWidget):
+class ProbeLocationViewer(pg.ImageView):
 
-    def __init__(self):
-        """MainWindow constructor"""
-        super().__init__(windowTitle='Qt Widget demo')
-
-        #########################
-        # Create widget objects #
-        #########################
-
-        # QWidget
-        subwidget = qtw.QWidget(self, toolTip='This is my widget')
-        subwidget.setToolTip('This is YOUR widget')
-        print(subwidget.toolTip())
-
-        # QLabel
-        label = qtw.QLabel('<b>Hello Widgets!</b>', self, margin=10)
-
-        # QLineEdit
-        line_edit = qtw.QLineEdit(
-            'default value',
-            self,
-            placeholderText='Type here',
-            clearButtonEnabled=True,
-            maxLength=20
-        )
-
-        # QPushButton
-        button = qtw.QPushButton(
-            "Push Me",
-            self,
-            checkable=True,
-            checked=True,
-            shortcut=qtg.QKeySequence('Ctrl+p')
-        )
-
-        # QComboBox
-        combobox = qtw.QComboBox(
-            self,
-            editable=True,
-            insertPolicy=qtw.QComboBox.InsertAtTop
-        )
-        combobox.addItem('Lemon', 1)
-        combobox.addItem('Peach', 'Ohh I like Peaches!')
-        combobox.addItem('Strawberry', qtw.QWidget)
-        combobox.insertItem(1, 'Radish', 2)
-
-        # QSpinBox
-        spinbox = qtw.QSpinBox(
-            self,
-            value=12,
-            maximum=100,
-            minimum=10,
-            prefix='$',
-            suffix=' + Tax',
-            singleStep=5
-        )
-
-        # QDateTimeEdit
-        import datetime
-        datetimebox = qtw.QDateTimeEdit(
-            self,
-            date=datetime.date.today(),
-            time=datetime.time(12, 30),
-            calendarPopup=True,
-            maximumDate=datetime.date(2020, 1, 1),
-            maximumTime=datetime.time(17, 0),
-            displayFormat='yyyy-MM-dd HH:mm'
-        )
-
-        # QTextEdit
-        textedit = qtw.QTextEdit(
-            self,
-            acceptRichText=False,
-            lineWrapMode=qtw.QTextEdit.FixedColumnWidth,
-            lineWrapColumnOrWidth=25,
-            placeholderText='Enter your text here'
-        )
-
-        ##################
-        # Layout Objects #
-        ##################
-
-        # Add widget objects to a layout
-        layout = qtw.QVBoxLayout()
-        self.setLayout(layout)
-
-        layout.addWidget(label)
-        layout.addWidget(line_edit)
-
-        # Add a layout to a layout
-        sublayout = qtw.QHBoxLayout()
-        layout.addLayout(sublayout)
-
-        sublayout.addWidget(button)
-        sublayout.addWidget(combobox)
-
-        # create a container widget
-
-        container = qtw.QWidget(self)
-        grid_layout = qtw.QGridLayout()
-        #layout.addLayout(grid_layout)
-        container.setLayout(grid_layout)
-
-        grid_layout.addWidget(spinbox, 0, 0)
-        grid_layout.addWidget(datetimebox, 0, 1)
-        grid_layout.addWidget(textedit, 1, 0, 2, 2)
+    def __init__(self, parent=None, label=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.label = "probe location viewer"
+        #! temp
+        self.setImage(np.random.normal(size=(100, 100)))
+        self.ui.histogram.hide()
+        self.ui.menuBtn.hide()
+        self.ui.roiBtn.hide()
 
 
-#        container.setSizePolicy(
-#            qtw.QSizePolicy.Expanding,
-#            qtw.QSizePolicy.Expanding
-#            )
+class MainWindow(QtWidgets.QMainWindow):
 
-        # QFormLayout
+    def __init__(self, parent=None, label=None, *args, **kwargs):
+        super().__init__(parent=parent, *args, **kwargs)
+        self.title = "gui with docked modules"
 
-        form_layout = qtw.QFormLayout()
-        layout.addLayout(form_layout)
-        form_layout.addRow('Item 1', qtw.QLineEdit(self))
-        form_layout.addRow('Item 2', qtw.QLineEdit(self))
-        form_layout.addRow(qtw.QLabel('<b>This is a label-only row</b>'))
+        # self.MainLayout = pg.LayoutWidget()
+        self.resize(1000, 500)
+        self.default_docked_widget_list = [
+            FolderSearchView(),
+            ProbeLocationViewer(),
+        ]
 
-        ################
-        # Size Control #
-        ################
+    def add_docked_widgets(self, docked_widget_list=None):
+        if self.default_docked_widget_list and not docked_widget_list:
+            docked_widget_list = self.default_docked_widget_list
 
-        # setting a fixed size
-        # Fix at 150 pixels wide by 40 pixels high
-        label.setFixedSize(150, 40)
-
-        # setting minimum and maximum sizes
-        line_edit.setMinimumSize(150, 15)
-        line_edit.setMaximumSize(300, 30)
-
-        # set the spinbox to a fixed width
-        spinbox.setSizePolicy(qtw.QSizePolicy.Fixed, qtw.QSizePolicy.Preferred)
-
-        # set the textedit to expand
-        textedit.setSizePolicy(
-            qtw.QSizePolicy.MinimumExpanding,
-            qtw.QSizePolicy.MinimumExpanding
-        )
-        textedit.sizeHint = lambda: qtc.QSize(500, 500)
-
-        # use stretch factor
-
-        stretch_layout = qtw.QHBoxLayout()
-        layout.addLayout(stretch_layout)
-        stretch_layout.addWidget(qtw.QLineEdit('Short'), 1)
-        stretch_layout.addWidget(qtw.QLineEdit('Long'), 2)
-
-        #############################
-        # Container Widgets         #
-        #############################
-
-        # QTabWidget
-        tab_widget = qtw.QTabWidget(
-            movable=True,
-            tabPosition=qtw.QTabWidget.West,
-            tabShape=qtw.QTabWidget.Triangular
-        )
-        layout.addWidget(tab_widget)
-        tab_widget.addTab(container, 'Tab the first')
-        tab_widget.addTab(subwidget, 'Tab the second')
-
-        tab_widget.setMovable(True)
-
-        #QGroupBox
-        groupbox = qtw.QGroupBox(
-            'Buttons',
-            checkable=True,
-            checked=True,
-            alignment=qtc.Qt.AlignHCenter,
-            flat=True
-        )
-        groupbox.setLayout(qtw.QHBoxLayout())
-        groupbox.layout().addWidget(qtw.QPushButton('OK'))
-        groupbox.layout().addWidget(qtw.QPushButton('Cancel'))
-
-        layout.addWidget(groupbox)
-
-        ##############
-        # Validation #
-        ##############
-        line_edit.setText('0.0.0.0')
-        line_edit.setValidator(IPv4Validator())
-
-        ratingbox = ChoiceSpinBox(['bad', 'average', 'good', 'awesome'], self)
-        sublayout.addWidget(ratingbox)
-        self.show()
+        self.area = DockArea()
+        self.setCentralWidget(self.area)
+        self.dock = []
+        for dock in docked_widget_list:
+            label = dock.label if hasattr(dock, "label") else ""
+            label = "<drag to move> <double-click to undock>"
+            self.dock.append(item := Dock(label, size=(200, 200), closable=False))
+            self.area.addDock(item, "left")
+            item.addWidget(dock)
+            ## Test ability to move docks programatically after they have been placed
+            if self.dock:
+                self.area.moveDock(item, "right", self.dock[-1])
 
 
-if __name__ == '__main__':
-    app = qtw.QApplication(sys.argv)
-    # it's required to save a reference to MainWindow.
-    # if it goes out of scope, it will be destroyed.
-    mw = MainWindow()
-    sys.exit(app.exec())
+if __name__ == "__main__":
+    app = pg.mkQApp("docked widget GUI")
+    win = MainWindow()
+    win.add_docked_widgets([]) # FolderTreeView()
+
+    # app.exec()
+    win.show()
+    sys.exit(pg.exec())

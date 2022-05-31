@@ -1,0 +1,45 @@
+{
+    "implants": [
+        {
+            "index": 0,
+            "type": "#42",
+            "search_strings": [
+                "foot",
+                "ball",
+                "42"
+            ]
+        },
+        {
+            "index": 1,
+            "type": "TS-1",
+            "search_strings": [
+                "TS1",
+                "TS-1"
+            ]
+        },
+        {
+            "index": 2,
+            "type": "TS-2",
+            "search_strings": [
+                "TS2",
+                "TS-2"
+            ]
+        },
+        {
+            "index": 3,
+            "type": "TS-3",
+            "search_strings": [
+                "TS3",
+                "TS-3"
+            ]
+        },
+        {
+            "index": 4,
+            "type": "TS-4",
+            "search_strings": [
+                "TS4",
+                "TS-4"
+            ]
+        }
+    ]
+}

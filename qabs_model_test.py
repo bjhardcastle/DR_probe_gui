@@ -1,11 +1,12 @@
 # try:
 #     from PySide6 import QtGui, QtCore, QtWidgets
 # except:
-from PyQt5 import QtGui, QtCore, QtWidgets
-from pathlib import PureWindowsPath, Path, PurePath
 import os
 from datetime import timedelta
+from pathlib import Path, PurePath, PureWindowsPath
 from time import time
+
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 root_pathlist = [
     # PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp"),
@@ -13,7 +14,8 @@ root_pathlist = [
     PureWindowsPath(r"\\W10DTSM18306\neuropixels_data"),
     # PureWindowsPath(r"C:\Users\ben.hardcastle"),
     PureWindowsPath(
-        r"\\allen\programs\braintv\workgroups\nc-ophys\corbettb\NP_behavior_pipeline\QC"),
+        r"\\allen\programs\braintv\workgroups\nc-ophys\corbettb\NP_behavior_pipeline\QC"
+    ),
     PureWindowsPath(r"\\allen\programs"),
     PureWindowsPath(r"\\W10DT05515\A"),
     PureWindowsPath(r"\\W10DT05515\B"),
@@ -25,15 +27,23 @@ root_pathlist = [
     PureWindowsPath(r"\\W10DTSM112721"),
     PureWindowsPath(r"\\allen\programs\mindscope\production"),
     PureWindowsPath(r"\\allen\programs\braintv\production"),
-    PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp")
+    PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp"),
 ]
 
-tempDir = QtCore.QTemporaryDir(os.path.join(QtCore.QDir.tempPath(), "X"*16))
+tempDir = QtCore.QTemporaryDir(os.path.join(QtCore.QDir.tempPath(), "X" * 16))
 tempDirPathObj = Path(tempDir.path())
 
 for path in root_pathlist:
-    tf = QtCore.QFile.link(str(path), str(
-        tempDirPathObj / (str(path).replace("\\\\", "").replace("\\", "_").replace(":", "") + ".lnk")))
+    tf = QtCore.QFile.link(
+        str(path),
+        str(
+            tempDirPathObj
+            / (
+                str(path).replace("\\\\", "").replace("\\", "_").replace(":", "")
+                + ".lnk"
+            )
+        ),
+    )
 
 app = QtWidgets.QApplication([])
 
@@ -71,7 +81,7 @@ proxyModel.setFilterCaseSensitivity(QtCore.Qt.CaseInsensitive)
 # proxyModel.filterRegExp()
 # layout = QtWidgets.QVBoxLayout()
 
-#TODO add better expanding (See https://stackoverflow.com/questions/56781145/expand-specific-items-in-a-treeview-during-filtering)
+# TODO add better expanding (See https://stackoverflow.com/questions/56781145/expand-specific-items-in-a-treeview-during-filtering)
 
 treeView = QtWidgets.QTreeView()
 treeView.setModel(proxyModel)
@@ -114,7 +124,7 @@ def setViewFilter(input_text):
     else:
         rePattern = input_text
 
-    sinceLastUpdate = timedelta(seconds=(time()-lastUpdateTime)).seconds
+    sinceLastUpdate = timedelta(seconds=(time() - lastUpdateTime)).seconds
     if sinceLastUpdate > 0:
         # treeView.collapseAll()
         proxyModel.setFilterRegularExpression("")
@@ -125,7 +135,7 @@ def setViewFilter(input_text):
 
 def expandTreeView():
     global lastUpdateTime
-    sinceLastUpdate = timedelta(seconds=(time()-lastUpdateTime)).seconds
+    sinceLastUpdate = timedelta(seconds=(time() - lastUpdateTime)).seconds
     if sinceLastUpdate > 2:
         # treeView.expandAll()
         # treeView.expandToDepth(4)
