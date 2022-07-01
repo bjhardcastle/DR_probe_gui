@@ -112,6 +112,7 @@ treeView.doubleClicked.connect(openContainingFolder)
 filterStr = QtWidgets.QLineEdit(placeholderText="Enter mouseID")
 
 # TODO - allow filtering for any string within session id match (filter with pattern first, then filter results with lookaround?)
+# TODO - filemodel doesn't update when new folders are made - we need to trigger a refresh sometime: when updating the view ?
 
 lastUpdateTime = time()
 

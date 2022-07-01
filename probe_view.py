@@ -27,7 +27,7 @@ class Probe:
     """ class for a single neuropixels probe 
     should be initialized with a name [a-f] or number [0-5]
     """
-    init_id: Union[int, str] = dataclasses.field(default=None, init=True, repr=False)
+    init_id: Union[int, str] = dataclasses.InitVar(None) #dataclasses.field(default=None, init=True, repr=False)
     index: int = None
     label: str = None
     notes: str = None
