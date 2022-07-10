@@ -4,91 +4,147 @@ import abc
 import dataclasses
 import os
 import pathlib
+import pdb
+import tempfile
 import zlib
-from curses.ascii import isalnum
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 KB = 1024
 MB = 1024**2
 GB = 1024**3
 
 
-def forLoopCrc(fpath: Union[str, pathlib.Path]) -> str:
-    """ generate crc32 with for loop and buffer """
+def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
+    """ generate crc32 with for loop to read large files in chunks """
     crc = 0
     with open(str(fpath), 'rb', 65536) as ins:
-        for x in range(int((os.stat(fpath).st_size / 65536)) + 1):
+        for _ in range(int((os.stat(fpath).st_size / 65536)) + 1):
             crc = zlib.crc32(ins.read(65536), crc)
     return '%X' % (crc & 0xFFFFFFFF)
 
 
+def test_crc32_function(func):
+    temp = os.path.join(tempfile.gettempdir(), 'checksum_test')
+    with open(os.path.join(temp), 'wb') as f:
+        f.write(b'foo')
+    assert func(temp) == "8C736521", "checksum function incorrect"
+
+
 def valid_crc32_checksum(value: str) -> bool:
     """ validate crc32 checksum """
-    if isinstance(value, str) and value.isalnum() and len(value) == 8:
+    if isinstance(value, str) and len(value) == 8 \
+        and all(c in '0123456789ABCDEF' for c in value.upper()):
         return True
     return False
 
 
-@dataclasses.dataclass()
-class DataValidationFile():
-    """ represents a file to be validated
-        can be subclassed easily to change the checksum alogrithm
+class DataValidationFileBase(abc.ABC):
+    """ Represents a file to be validated
+    
+        Can be subclassed easily to change the checksum alogrithm
+        
+        Call super().__init__(path, checksum, size) in subclass __init__  
+        
     """
-    path: str = None
-    size: int = None
-    _checksum: str = None
-    checksum_threshold = 50 * MB
-    checksum_function = forLoopCrc
 
-    def __post_init__(self):
+    # TODO add repr and eq methods
+
+    checksum_threshold: int = 50 * MB
+    checksum_name: str = None                                        # e.g. 'crc32'
+    checksum_generator: Callable[[str], str] = NotImplementedError(
+    )                                                                # implementation of algorithm for generating checksums, accept a path and return a checksum
+    checksum_test: Callable[[Callable], None] = NotImplementedError(
+    )                                                                # a test Callable that confirms checksum_generator is working as expected, accept a function, return nothing (raise exception if test fails)
+    checksum_validate: Callable[[str], bool] = NotImplementedError(
+    )                                                                # a function that accepts a string and validates it conforms to the checksum format, returning boolean
+
+    # @abc.abstractmethod
+    def __init__(self, path: str = None, checksum: str = None, size: int = None):
         """ setup depending on the inputs """
 
-        if not (self.path and self._checksum):
-            raise ValueError("DataValidationFile: either path or checksum must be set")
+        if not (path or checksum):
+            raise ValueError(f"{self.__class__}: either path or checksum must be set")
 
-        if self.path and os.path.exists(self.path):
-            self.size = os.path.getsize(self.path)
+        if path and not os.path.isfile(path):
+            raise ValueError(f"{self.__class__}: path must point to a file {path=}")
+        elif path:
+            self.path = path
 
-        if self.path and not self._checksum and self.size > self.checksum_threshold:
-            self.generate_checksum()
+        if path and os.path.exists(path):
+            self.size = os.path.getsize(path)
+        elif size and isinstance(size, int):
+            self.size = size
+        elif not isinstance(size, int):
+            raise ValueError(f"{self.__class__}: size must be an integer {size}")
 
-    def generate_checksum(self):
-        self.checksum = self.checksum_function(self.path)
+        if checksum:
+            self.checksum = checksum
+
+        if not checksum \
+            and self.path and os.path.exists(self.path) \
+            and self.size and self.size < self.checksum_threshold \
+            :
+            self.checksum = self.__class__.generate_checksum(self.path)
+
+    @classmethod
+    # @abc.abstractmethod
+    def generate_checksum(cls, path: str) -> str:
+        cls.checksum_test(cls.checksum_generator)
+        return cls.checksum_generator(path)
 
     @property
+    # @abc.abstractmethod
     def checksum(self) -> str:
+        print("validated checksum:")
         return self._checksum
 
     @checksum.setter
+    # @abc.abstractmethod
     def checksum(self, value: str):
-        if valid_crc32_checksum(value):
+        if self.__class__.checksum_validate(value):
+            print(f"setting {self.checksum_name} checksum: {value}")
             self._checksum = value
         else:
-            raise ValueError("DataValidationFile: trying to set an invalid crc32 checksum")
+            raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
+
+
+# TODO add FileSession class, that gets foldername / filename from path
+# TODO move path from DataValidation to File class
+# TODO extend DVCRC43 and FileSession class to support checksum plus file operations
+
+
+class DataValidationFileCRC32(DataValidationFileBase):
+    checksum_name: str = "CRC32"     # e.g. 'crc32'
+    checksum_generator: Callable[
+        [str],
+        str] = chunk_crc32           # implementation of algorithm for generating checksums, accept a path and return a checksum
+    checksum_test: Callable[
+        [Callable],
+        None] = test_crc32_function  # a test Callable that confirms checksum_generator is working as expected, accept a function, return nothing (raise exception if test fails)
+    checksum_validate: Callable[
+        [str],
+        bool] = valid_crc32_checksum # a function that accepts a string and validates it conforms to the checksum format, returning boolean
 
 
 class ValidationDatabase(abc.ABC):
     """ 
-    serves as a template for interacting with a database 
-    of filepaths, filesizes, and filehashes, for validating
-    data integrity
+    serves as a template for interacting with a database of filepaths,
+    filesizes, and filehashes, for validating data integrity
     
-    not to be used directly, but subclassed:
-    make a new subclass that implements each of the "abstract"
-    methods specified in this class
+    not to be used directly, but subclassed: make a new subclass that implements
+    each of the "abstract" methods specified in this class
     
-    as long as the subclass methods accept the same inputs
-    and output the expected results, a new database subclass 
-    can slot in to replace an old one in some other code 
-    without needing to make any other changes to that code
+    as long as the subclass methods accept the same inputs and output the
+    expected results, a new database subclass can slot in to replace an old one
+    in some other code without needing to make any other changes to that code
     
     Some design notes:
     
     - hash + filesize uniquely identify data, regardless of path 
     
     - the database holds previously-generated checksum hashes for
-    large files (because they can take a long time to generate),
-    plus their filesize at the time of checksum generation
+    large files (because they can take a long time to generate), plus their
+    filesize at the time of checksum generation
     
     - small text-like files can have checksums generated on the fly
     so don't need to live in the database (but they could)
@@ -128,10 +184,10 @@ class ValidationDatabase(abc.ABC):
 
     @abc.abstractmethod
     def find_matches(self,
-                     file: DataValidationFile,
+                     file: DataValidationFileBase,
                      path: str = None,
                      size: int = None,
-                     chksum: str = None) -> List[DataValidationFile]:
+                     chksum: str = None) -> List[DataValidationFileBase]:
         """search database for entries that match any of the given arguments 
 
         Args:
@@ -142,3 +198,9 @@ class ValidationDatabase(abc.ABC):
         Returns:
             dict: _description_
         """
+
+
+x = DataValidationFileCRC32(path=os.path.join(tempfile.gettempdir(), 'checksum_test'))
+print(x.checksum)
+x.checksum = "0" * 8
+# int('003P', 16)
