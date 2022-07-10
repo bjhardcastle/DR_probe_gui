@@ -10,24 +10,24 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 root_pathlist = [
     # PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp"),
-    PureWindowsPath(r"\\W10DTSM112719\neuropixels_data"),
-    PureWindowsPath(r"\\W10DTSM18306\neuropixels_data"),
+    PureWindowsPath(r"\\W10dtsm18306\c\ProgramData\AIBS_MPE\lims_scheduler_d\manifests_error"),
+    PureWindowsPath(r"\\W10DTSM112719\c\ProgramData\AIBS_MPE\lims_scheduler_d\manifests_error"),
     # PureWindowsPath(r"C:\Users\ben.hardcastle"),
-    PureWindowsPath(
-        r"\\allen\programs\braintv\workgroups\nc-ophys\corbettb\NP_behavior_pipeline\QC"
-    ),
-    PureWindowsPath(r"\\allen\programs"),
-    PureWindowsPath(r"\\W10DT05515\A"),
-    PureWindowsPath(r"\\W10DT05515\B"),
-    PureWindowsPath(r"\\W10DT05515\P"),
-    PureWindowsPath(r"\\W10DT05501\A"),
-    PureWindowsPath(r"\\W10DT05501\B"),
-    PureWindowsPath(r"\\W10dt05501\j"),
-    PureWindowsPath(r"\\W10DT9I8QD3D\extraction"),
-    PureWindowsPath(r"\\W10DTSM112721"),
-    PureWindowsPath(r"\\allen\programs\mindscope\production"),
-    PureWindowsPath(r"\\allen\programs\braintv\production"),
-    PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp"),
+    # PureWindowsPath(
+    #     r"\\allen\programs\braintv\workgroups\nc-ophys\corbettb\NP_behavior_pipeline\QC"
+    # ),
+    # PureWindowsPath(r"\\allen\programs"),
+    # PureWindowsPath(r"\\W10DT05515\A"),
+    # PureWindowsPath(r"\\W10DT05515\B"),
+    # PureWindowsPath(r"\\W10DT05515\P"),
+    # PureWindowsPath(r"\\W10DT05501\A"),
+    # PureWindowsPath(r"\\W10DT05501\B"),
+    # PureWindowsPath(r"\\W10dt05501\j"),
+    # PureWindowsPath(r"\\W10DT9I8QD3D\extraction"),
+    # PureWindowsPath(r"\\W10DTSM112721"),
+    # PureWindowsPath(r"\\allen\programs\mindscope\production"),
+    # PureWindowsPath(r"\\allen\programs\braintv\production"),
+    # PureWindowsPath(r"\\allen\programs\mindscope\workgroups\np-exp"),
 ]
 
 tempDir = QtCore.QTemporaryDir(os.path.join(QtCore.QDir.tempPath(), "X" * 16))
