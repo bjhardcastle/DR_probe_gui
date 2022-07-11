@@ -116,6 +116,12 @@ class DataValidationFileBase(abc.ABC):
         else:
             raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}(path=r'{self.path}', checksum='{self.checksum}', size={self.size})"
+
+    def __eq__(self, other):
+        return self.checksum == other.checksum and self.size == other.size
+
 
 class SessionFile():
     """ Represents a single file belonging to a neuropixels ecephys session """
@@ -276,6 +282,7 @@ x = DataValidationFileCRC32(
     path=
     R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
 )
+print(x)
 print(x.path)
 print(x.checksum)
 print(x.mouse_id)
