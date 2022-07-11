@@ -50,14 +50,22 @@ class DataValidationFileBase(abc.ABC):
 
     # TODO add repr and eq methods
 
+    # filesizes below this will have checksums auto-generated on init
     checksum_threshold: int = 50 * MB
-    checksum_name: str = None                                        # e.g. 'crc32'
-    checksum_generator: Callable[[str], str] = NotImplementedError(
-    )                                                                # implementation of algorithm for generating checksums, accept a path and return a checksum
-    checksum_test: Callable[[Callable], None] = NotImplementedError(
-    )                                                                # a test Callable that confirms checksum_generator is working as expected, accept a function, return nothing (raise exception if test fails)
-    checksum_validate: Callable[[str], bool] = NotImplementedError(
-    )                                                                # a function that accepts a string and validates it conforms to the checksum format, returning boolean
+
+    checksum_name: str = None # e.g. 'crc32'
+
+    # implementation of algorithm for generating checksums, accepts a path and
+    # returns a checksum string
+    checksum_generator: Callable[[str], str] = NotImplementedError()
+
+    # a function that confirms checksum_generator is working as expected,
+    # accept a function, return nothing but raise exception if test fails
+    checksum_test: Callable[[Callable], None] = NotImplementedError()
+
+    # a function that accepts a string and confirms it conforms to the checksum
+    # format, return True or False
+    checksum_validate: Callable[[str], bool] = NotImplementedError()
 
     # @abc.abstractmethod
     def __init__(self, path: str = None, checksum: str = None, size: int = None):
