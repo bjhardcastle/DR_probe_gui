@@ -48,8 +48,6 @@ class DataValidationFileBase(abc.ABC):
         
     """
 
-    # TODO add repr and eq methods
-
     # filesizes below this will have checksums auto-generated on init
     checksum_threshold: int = 50 * MB
 
@@ -177,10 +175,6 @@ class SessionFile():
                 self.relative_path = os.path.join(self.session_folder, str(relative_path))
             else:
                 self.relative_path = str(relative_path)
-
-
-# TODO move path from DataValidation to File class
-# TODO extend DVCRC43 and FileSession class to support checksum plus file operations
 
 
 class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
