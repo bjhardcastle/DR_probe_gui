@@ -10,10 +10,6 @@ import tempfile
 import zlib
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-KB = 1024
-MB = 1024**2
-GB = 1024**3
-
 
 def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
     """ generate crc32 with for loop to read large files in chunks """
@@ -41,29 +37,31 @@ def valid_crc32_checksum(value: str) -> bool:
 
 class DataValidationFileBase(abc.ABC):
     """ Represents a file to be validated
-    
+        
+        Not to be used directly, but rather subclassed.
         Can be subclassed easily to change the checksum alogrithm
         
         Call super().__init__(path, checksum, size) in subclass __init__  
         
     """
 
+    checksum_threshold: int = 50 * 1024**2
     # filesizes below this will have checksums auto-generated on init
-    checksum_threshold: int = 50 * MB
 
     checksum_name: str = None # e.g. 'crc32'
 
+    checksum_generator: Callable[[str], str] = NotImplementedError()
     # implementation of algorithm for generating checksums, accepts a path and
     # returns a checksum string
-    checksum_generator: Callable[[str], str] = NotImplementedError()
 
+    checksum_test: Callable[[Callable], None] = NotImplementedError()
     # a function that confirms checksum_generator is working as expected,
     # accept a function, return nothing but raise exception if test fails
-    checksum_test: Callable[[Callable], None] = NotImplementedError()
+
+    checksum_validate: Callable[[str], bool] = NotImplementedError()
 
     # a function that accepts a string and confirms it conforms to the checksum
     # format, return True or False
-    checksum_validate: Callable[[str], bool] = NotImplementedError()
 
     # @abc.abstractmethod
     def __init__(self, path: str = None, checksum: str = None, size: int = None):
@@ -94,19 +92,16 @@ class DataValidationFileBase(abc.ABC):
             self.checksum = self.__class__.generate_checksum(self.path)
 
     @classmethod
-    # @abc.abstractmethod
     def generate_checksum(cls, path: str) -> str:
         cls.checksum_test(cls.checksum_generator)
         return cls.checksum_generator(path)
 
     @property
-    # @abc.abstractmethod
     def checksum(self) -> str:
         print("validated checksum:")
         return self._checksum
 
     @checksum.setter
-    # @abc.abstractmethod
     def checksum(self, value: str):
         if self.__class__.checksum_validate(value):
             print(f"setting {self.checksum_name} checksum: {value}")
@@ -121,7 +116,7 @@ class DataValidationFileBase(abc.ABC):
         return self.checksum == other.checksum and self.size == other.size
 
 
-class SessionFile():
+class SessionFile:
     """ Represents a single file belonging to a neuropixels ecephys session """
 
     # identify a session based on
@@ -175,19 +170,22 @@ class SessionFile():
                 self.relative_path = os.path.join(self.session_folder, str(relative_path))
             else:
                 self.relative_path = str(relative_path)
+        else:
+            raise ValueError(f"{self.__class__}: path does not contain a session ID {path=}")
 
 
 class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
-    checksum_name: str = "CRC32"     # e.g. 'crc32'
-    checksum_generator: Callable[
-        [str],
-        str] = chunk_crc32           # implementation of algorithm for generating checksums, accept a path and return a checksum
-    checksum_test: Callable[
-        [Callable],
-        None] = test_crc32_function  # a test Callable that confirms checksum_generator is working as expected, accept a function, return nothing (raise exception if test fails)
-    checksum_validate: Callable[
-        [str],
-        bool] = valid_crc32_checksum # a function that accepts a string and validates it conforms to the checksum format, returning boolean
+    checksum_name: str = "CRC32"
+
+    checksum_generator: Callable[[str], str] = chunk_crc32
+    # implementation of algorithm for generating checksums, accept a path and return a checksum
+
+    checksum_test: Callable[[Callable], None] = test_crc32_function
+    # a test Callable that confirms checksum_generator is working as expected, accept a function, return nothing (raise exception if test fails)
+
+    checksum_validate: Callable[[str], bool] = valid_crc32_checksum
+
+    # a function that accepts a string and validates it conforms to the checksum format, returning boolean
 
     def __init__(self, path: str = None, checksum: str = None, size: int = None):
         SessionFile.__init__(self, path)
