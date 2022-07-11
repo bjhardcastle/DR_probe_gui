@@ -127,10 +127,10 @@ class SessionFile():
             self.path = path
 
         # extract the session ID from anywhere in the path
-        session_folder = re.search(self.session_reg_exp, path)[0]
-        if session_folder:
+        session_folders = re.search(self.session_reg_exp, path)
+        if session_folders:
 
-            self.session_folder = session_folder
+            self.session_folder = session_folders[0]
 
             # extract the constituent parts of the session folder
             self.session_id = self.session_folder.split('_')[0]
@@ -180,6 +180,10 @@ class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
     checksum_validate: Callable[
         [str],
         bool] = valid_crc32_checksum # a function that accepts a string and validates it conforms to the checksum format, returning boolean
+
+    def __init__(self, path: str = None, checksum: str = None, size: int = None):
+        SessionFile.__init__(self, path)
+        DataValidationFileBase.__init__(self, path, checksum, size)
 
 
 class ValidationDatabase(abc.ABC):
@@ -260,6 +264,11 @@ x = DataValidationFileCRC32(path=os.path.join(tempfile.gettempdir(), 'checksum_t
 print(x.checksum)
 x.checksum = "0" * 8
 # int('003P', 16)
-x = SessionFile(
+x = DataValidationFileCRC32(
+    path=
     R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
 )
+print(x.path)
+print(x.checksum)
+print(x.mouse_id)
+print(x.relative_path)
