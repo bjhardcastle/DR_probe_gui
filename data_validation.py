@@ -5,6 +5,7 @@ import dataclasses
 import os
 import pathlib
 import pdb
+import re
 import tempfile
 import zlib
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -108,7 +109,34 @@ class DataValidationFileBase(abc.ABC):
             raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
 
 
-# TODO add FileSession class, that gets foldername / filename from path
+class SessionFile():
+    """ Represents a single file belonging to a neuropixels ecephys session """
+
+    # identify a session based on
+    # [10-digit session ID]_[6-digit mouseID]_[6-digit date str]
+    session_reg_exp = "[0-9]{0,10}_[0-9]{0,6}_[0-9]{0,8}"
+
+    def __init__(self, path: str):
+        """ from the complete file path we can extract some information upon
+        initialization """
+
+        # first ensure the path is a file
+        if not (isinstance(path, str) and os.path.isfile(path)):
+            raise ValueError(f"{self.__class__}: path must point to a file {path=}")
+        else:
+            self.path = pathlib.Path(path)
+
+        # extract the session ID from the path
+        session_folder = re.search(self.session_reg_exp, path)[0]
+        if session_folder:
+            self.session_folder = session_folder
+            self.session_folder_parent = path.split(session_folder)[0]
+            self.relative_path = os.path.relpath(path, self.session_folder_parent)
+            self.session_id = session_folder.split('_')[0]
+            self.mouse_id = session_folder.split('_')[1]
+            self.date = session_folder.split('_')[2]
+
+
 # TODO move path from DataValidation to File class
 # TODO extend DVCRC43 and FileSession class to support checksum plus file operations
 
@@ -204,3 +232,6 @@ x = DataValidationFileCRC32(path=os.path.join(tempfile.gettempdir(), 'checksum_t
 print(x.checksum)
 x.checksum = "0" * 8
 # int('003P', 16)
+x = SessionFile(
+    R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
+)
