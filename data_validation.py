@@ -124,24 +124,52 @@ class SessionFile():
         if not (isinstance(path, str) and os.path.isfile(path)):
             raise ValueError(f"{self.__class__}: path must point to a file {path=}")
         else:
-            self.path = pathlib.Path(path)
+            self.path = path
 
-        # extract the session ID from the path
+        # extract the session ID from anywhere in the path
         session_folder = re.search(self.session_reg_exp, path)[0]
         if session_folder:
+
             self.session_folder = session_folder
-            self.session_folder_parent = path.split(session_folder)[0]
-            self.relative_path = os.path.relpath(path, self.session_folder_parent)
-            self.session_id = session_folder.split('_')[0]
-            self.mouse_id = session_folder.split('_')[1]
-            self.date = session_folder.split('_')[2]
+
+            # extract the constituent parts of the session folder
+            self.session_id = self.session_folder.split('_')[0]
+            self.mouse_id = self.session_folder.split('_')[1]
+            self.date = self.session_folder.split('_')[2]
+
+            # we expect the session_folder string to first appear in the path as
+            # a child of some 'repository' of session folders or individual
+            # files - split the path at the first session_folder match and call
+            # that folder the root
+            self.root_path = self.path.split(self.session_folder)[0]
+
+            # if the repository contains session folders, it should contain the
+            # following:
+            session_folder_path = os.path.join(self.root_path, self.session_folder)
+
+            # but this may not exist: we could have a file sitting in a folder
+            # with assorted files from multiple sessions (e.g. LIMS incoming),
+            # or a folder which has the session_folder pattern with extra info
+            # appended, eg. _probeABC:
+            if os.path.exists(session_folder_path):
+                self.session_folder_path = session_folder_path
+            else:
+                self.session_folder_path = None
+
+            # wherever the file is, get its path relative to the parent of a
+            # hypothetical session folder:
+            relative_path = str(pathlib.Path(self.path).relative_to(self.root_path))
+            if pathlib.Path(relative_path).parts[0] != self.session_folder:
+                self.relative_path = os.path.join(self.session_folder, relative_path)
+            else:
+                self.relative_path = relative_path
 
 
 # TODO move path from DataValidation to File class
 # TODO extend DVCRC43 and FileSession class to support checksum plus file operations
 
 
-class DataValidationFileCRC32(DataValidationFileBase):
+class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
     checksum_name: str = "CRC32"     # e.g. 'crc32'
     checksum_generator: Callable[
         [str],
