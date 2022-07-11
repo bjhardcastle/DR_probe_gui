@@ -257,14 +257,6 @@ class ValidationDatabase(abc.ABC):
                      size: int = None,
                      chksum: str = None) -> List[DataValidationFileBase]:
         """search database for entries that match any of the given arguments 
-
-        Args:
-            path (Union[str, List[str]], optional): _description_. Defaults to None.
-            size (Union[int, List[int]], optional): _description_. Defaults to None.
-            chksum (Union[str, List[str]], optional): _description_. Defaults to None.
-
-        Returns:
-            dict: _description_
         """
 
 
