@@ -158,11 +158,11 @@ class SessionFile():
 
             # wherever the file is, get its path relative to the parent of a
             # hypothetical session folder:
-            relative_path = str(pathlib.Path(self.path).relative_to(self.root_path))
-            if pathlib.Path(relative_path).parts[0] != self.session_folder:
-                self.relative_path = os.path.join(self.session_folder, relative_path)
+            relative_path = pathlib.Path(self.path).relative_to(self.root_path)
+            if relative_path.parts[0] != self.session_folder:
+                self.relative_path = os.path.join(self.session_folder, str(relative_path))
             else:
-                self.relative_path = relative_path
+                self.relative_path = str(relative_path)
 
 
 # TODO move path from DataValidation to File class
