@@ -2,13 +2,14 @@
 
 import abc
 import dataclasses
+import json
 import os
 import pathlib
 import pdb
 import re
 import tempfile
 import zlib
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 
 def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
@@ -17,7 +18,7 @@ def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
     with open(str(fpath), 'rb', 65536) as ins:
         for _ in range(int((os.stat(fpath).st_size / 65536)) + 1):
             crc = zlib.crc32(ins.read(65536), crc)
-    return '%X' % (crc & 0xFFFFFFFF)
+    return '%08X' % (crc & 0xFFFFFFFF)
 
 
 def test_crc32_function(func):
@@ -35,15 +36,105 @@ def valid_crc32_checksum(value: str) -> bool:
     return False
 
 
-class DataValidationFileBase(abc.ABC):
+class SessionFile:
+    """ Represents a single file belonging to a neuropixels ecephys session """
+
+    # identify a session based on
+    # [10-digit session ID]_[6-digit mouseID]_[6-digit date str]
+    session_reg_exp = "[0-9]{0,10}_[0-9]{0,6}_[0-9]{0,8}"
+
+    def __init__(self, path: str):
+        """ from the complete file path we can extract some information upon
+        initialization """
+
+        if not isinstance(path, str):
+            raise TypeError(f"{self.__class__}: path must be a str pointing to a file: {type(path)=}")
+
+        # ensure the path is a file, not directory
+        # if the file doesn't exist, we have to assume based on lack of file extension
+        if not os.path.exists(path):
+            if os.path.splitext(path)[1] == '':
+                is_file = False
+            else:
+                is_file = True
+        else:
+            is_file = os.path.isfile(path)
+
+        if not is_file:
+            raise ValueError(f"{self.__class__}: path must point to a file {path=}")
+        else:
+            self.path = path
+
+        self.name = os.path.basename(self.path)
+
+        # get the name of the folder the file lives in (which may be the same as root_path below)
+        self.parent = pathlib.Path(os.path.dirname(self.path)).parts[-1]
+
+        # extract the session ID from anywhere in the path
+        session_folders = re.search(self.session_reg_exp, path)
+        if session_folders:
+
+            self.session_folder = session_folders[0]
+
+            # extract the constituent parts of the session folder
+            self.session_id = self.session_folder.split('_')[0]
+            self.mouse_id = self.session_folder.split('_')[1]
+            self.date = self.session_folder.split('_')[2]
+
+            # we expect the session_folder string to first appear in the path as
+            # a child of some 'repository' of session folders or individual
+            # files - split the path at the first session_folder match and call
+            # that folder the root
+            parts = pathlib.Path(self.path).parts
+            while parts:
+                if self.session_folder in parts[0]:
+                    break
+                parts = parts[1:]
+            else:
+                raise ValueError(f"{self.__class__}: session_folder not found in path {self.path=}")
+            self.root_path = self.path.split(str(parts[0]))[0]
+
+            # if the repository contains session folders, it should contain the
+            # following:
+            session_folder_path = os.path.join(self.root_path, self.session_folder)
+
+            # but this may not exist: we could have a file sitting in a folder
+            # with assorted files from multiple sessions (e.g. LIMS incoming),
+            # or a folder which has the session_folder pattern with extra info
+            # appended, eg. _probeABC:
+            if os.path.exists(session_folder_path):
+                self.session_folder_path = session_folder_path
+            else:
+                self.session_folder_path = None
+
+            # wherever the file is, get its path relative to the parent of a
+            # hypothetical session folder ie. session_id/.../filename.ext :
+            session_relative_path = pathlib.Path(self.path).relative_to(self.root_path)
+            if session_relative_path.parts[0] != self.session_folder:
+                self.relative_path = os.path.join(self.session_folder, str(session_relative_path))
+            else:
+                self.relative_path = str(session_relative_path)
+
+        else:
+            print(ValueError(f"{self.__class__}: path does not contain a session ID {path=}"))
+
+    # TODO add inequality method for sorting by sessionID
+    def __lt__(self, other):
+        if self.session_id == other.session_id:
+            return self.relative_path < other.relative_path
+        return self.session_id < other.session_id
+
+
+class DataValidationFile(abc.ABC):
     """ Represents a file to be validated
         
         Not to be used directly, but rather subclassed.
-        Can be subclassed easily to change the checksum alogrithm
+        Can be subclassed easily to change the checksum database/alogrithm
         
-        Call super().__init__(path, checksum, size) in subclass __init__  
+        Call <superclass>.__init__(path, checksum, size) in subclass __init__  
         
     """
+    # DB: DataValidationDB = NotImplemented
 
     checksum_threshold: int = 50 * 1024**2
     # filesizes below this will have checksums auto-generated on init
@@ -70,17 +161,32 @@ class DataValidationFileBase(abc.ABC):
         if not (path or checksum):
             raise ValueError(f"{self.__class__}: either path or checksum must be set")
 
-        if path and not os.path.isfile(path):
+        if path and not isinstance(path, str):
+            raise TypeError(f"{self.__class__}: path must be a str pointing to a file: {type(path)=}")
+
+        # ensure the path is a file, not directory
+        # if the file doesn't exist, we have to assume based on lack of file extension
+        if not os.path.exists(path):
+            if os.path.splitext(path)[1] == '':
+                is_file = False
+            else:
+                is_file = True
+        else:
+            is_file = os.path.isfile(path)
+
+        if not is_file:
             raise ValueError(f"{self.__class__}: path must point to a file {path=}")
-        elif path:
-            self.path = path
+        else:
+            self.path = pathlib.Path(path).as_posix()
 
         if path and os.path.exists(path):
             self.size = os.path.getsize(path)
         elif size and isinstance(size, int):
             self.size = size
-        elif not isinstance(size, int):
+        elif size and not isinstance(size, int):
             raise ValueError(f"{self.__class__}: size must be an integer {size}")
+        else:
+            self.size = None
 
         if checksum:
             self.checksum = checksum
@@ -92,19 +198,20 @@ class DataValidationFileBase(abc.ABC):
             self.checksum = self.__class__.generate_checksum(self.path)
 
     @classmethod
-    def generate_checksum(cls, path: str) -> str:
+    def generate_checksum(cls, path: str = None) -> str:
         cls.checksum_test(cls.checksum_generator)
         return cls.checksum_generator(path)
 
     @property
     def checksum(self) -> str:
-        print("validated checksum:")
+        if not hasattr(self, '_checksum'):
+            return None
         return self._checksum
 
     @checksum.setter
     def checksum(self, value: str):
         if self.__class__.checksum_validate(value):
-            print(f"setting {self.checksum_name} checksum: {value}")
+            # print(f"setting {self.checksum_name} checksum: {value}")
             self._checksum = value
         else:
             raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
@@ -113,68 +220,14 @@ class DataValidationFileBase(abc.ABC):
         return f"{self.__class__.__name__}(path=r'{self.path}', checksum='{self.checksum}', size={self.size})"
 
     def __eq__(self, other):
+        # print("Testing checksum equality and filesize equality:")
         return self.checksum == other.checksum and self.size == other.size
 
 
-class SessionFile:
-    """ Represents a single file belonging to a neuropixels ecephys session """
+class CRC32DataValidationFile(DataValidationFile, SessionFile):
 
-    # identify a session based on
-    # [10-digit session ID]_[6-digit mouseID]_[6-digit date str]
-    session_reg_exp = "[0-9]{0,10}_[0-9]{0,6}_[0-9]{0,8}"
+    # DB: DataValidationDB = CRC32JsonDataValidationDB()
 
-    def __init__(self, path: str):
-        """ from the complete file path we can extract some information upon
-        initialization """
-
-        # first ensure the path is a file
-        if not (isinstance(path, str) and os.path.isfile(path)):
-            raise ValueError(f"{self.__class__}: path must point to a file {path=}")
-        else:
-            self.path = path
-
-        # extract the session ID from anywhere in the path
-        session_folders = re.search(self.session_reg_exp, path)
-        if session_folders:
-
-            self.session_folder = session_folders[0]
-
-            # extract the constituent parts of the session folder
-            self.session_id = self.session_folder.split('_')[0]
-            self.mouse_id = self.session_folder.split('_')[1]
-            self.date = self.session_folder.split('_')[2]
-
-            # we expect the session_folder string to first appear in the path as
-            # a child of some 'repository' of session folders or individual
-            # files - split the path at the first session_folder match and call
-            # that folder the root
-            self.root_path = self.path.split(self.session_folder)[0]
-
-            # if the repository contains session folders, it should contain the
-            # following:
-            session_folder_path = os.path.join(self.root_path, self.session_folder)
-
-            # but this may not exist: we could have a file sitting in a folder
-            # with assorted files from multiple sessions (e.g. LIMS incoming),
-            # or a folder which has the session_folder pattern with extra info
-            # appended, eg. _probeABC:
-            if os.path.exists(session_folder_path):
-                self.session_folder_path = session_folder_path
-            else:
-                self.session_folder_path = None
-
-            # wherever the file is, get its path relative to the parent of a
-            # hypothetical session folder:
-            relative_path = pathlib.Path(self.path).relative_to(self.root_path)
-            if relative_path.parts[0] != self.session_folder:
-                self.relative_path = os.path.join(self.session_folder, str(relative_path))
-            else:
-                self.relative_path = str(relative_path)
-        else:
-            raise ValueError(f"{self.__class__}: path does not contain a session ID {path=}")
-
-
-class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
     checksum_name: str = "CRC32"
 
     checksum_generator: Callable[[str], str] = chunk_crc32
@@ -189,11 +242,25 @@ class DataValidationFileCRC32(DataValidationFileBase, SessionFile):
 
     def __init__(self, path: str = None, checksum: str = None, size: int = None):
         SessionFile.__init__(self, path)
-        DataValidationFileBase.__init__(self, path, checksum, size)
+        DataValidationFile.__init__(self, path, checksum, size)
 
 
-class ValidationDatabase(abc.ABC):
+class DataValidationFolder:
     """ 
+    represents a folder for which we want to checksum the contents and add to database
+    """
+    #* connect to database
+    #* methods :
+    #* __init__ check is folder, exists
+    #*       possibly add all files in subfolders as DataValidationFile objects
+    #* add_contents_to_database
+    #* generate_large_file_checksums
+    #*
+
+
+class DataValidationDB(abc.ABC):
+    """ Represents a database of files with validation metadata
+
     serves as a template for interacting with a database of filepaths,
     filesizes, and filehashes, for validating data integrity
     
@@ -247,27 +314,158 @@ class ValidationDatabase(abc.ABC):
             - filename[0] != filename[1]
                 
     """
+    #* methods:
+    #* add_file(file: DataValidationFile)
+    #* get_matches(file: DataValidationFile) -> List[DataValidationFile]
+    #   the file above can be compared with entries in the returned list for further details
+
+    DVFile: DataValidationFile = NotImplemented
+
+    #? both of these could be staticmethods
 
     @abc.abstractmethod
-    def find_matches(self,
-                     file: DataValidationFileBase,
-                     path: str = None,
-                     size: int = None,
-                     chksum: str = None) -> List[DataValidationFileBase]:
+    def add_file(self, file: DataValidationFile):
+        """ add a file to the database """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_matches(self,
+                    file: DataValidationFile,
+                    path: str = None,
+                    size: int = None,
+                    checksum: str = None) -> List[DataValidationFile]:
         """search database for entries that match any of the given arguments 
         """
+        raise NotImplementedError
 
 
-x = DataValidationFileCRC32(path=os.path.join(tempfile.gettempdir(), 'checksum_test'))
-print(x.checksum)
-x.checksum = "0" * 8
-# int('003P', 16)
+class CRC32JsonDataValidationDB(DataValidationDB):
+    """ Represents a database of files with validation metadata in JSON format
+    
+    This is a subclass of DataValidationDB that stores the data in a JSON
+    file.
+    
+    The JSON file is a dictionary of dictionaries, with the following keys:
+        - dir_name/filename.extension: 
+                - windows: the path to the file with \\
+                - posix: the path to the file with /
+                - size: the size of the file in bytes
+                - crc32: the checksum of the file
+    
+    """
+
+    DVFile = CRC32DataValidationFile
+
+    path = '//allen/ai/homedirs/ben.hardcastle/crc32_data_validation_db.json'
+
+    db: List[DataValidationFile] = []
+
+    def __init__(self, path: str = None):
+        self.load(path)
+
+    def load(self, path: str = None):
+        """ load the database from disk """
+
+        path = path or self.path
+
+        if os.path.exists(path):
+
+            with open(path, 'r') as f:
+                items = json.load(f)
+
+            for item in items:
+                keys = items[item].keys()
+
+                if 'posix' in keys or 'linux' in keys:
+                    path = items[item]['posix' or 'linux']
+                elif 'windows' in keys:
+                    path = items[item]['windows']
+                else:
+                    path = None
+                checksum = items[item]['crc32'] if 'crc32' in keys else None
+                size = items[item]['size'] if 'size' in keys else None
+                self.add_file(file=self.DVFile(path, checksum, size))
+
+    def save(self):
+        """ save the database to disk as json file """
+
+        dump = {}
+        for file in self.db:
+
+            item_name = pathlib.Path(file.path).as_posix()
+
+            item = {
+                item_name: {
+                    'windows': str(pathlib.PureWindowsPath(file.path)),
+                    'posix': pathlib.Path(file.path).as_posix(),
+                }
+            }
+
+            if file.checksum:
+                item[item_name]['crc32'] = file.checksum
+
+            if file.size:
+                item[item_name]['size'] = file.size
+
+            dump.update(item)
+
+        with open(self.path, 'w') as f:
+            json.dump(dump, f, indent=4)
+
+    def add_folder(self, folder: str, filter: str = None):
+        """ add all files in a folder to the database """
+        for root, _, files in os.walk(folder):
+            for file in files:
+                if filter and isinstance(filter, str) and filter not in file:
+                    continue
+                self.add_file(file=self.DVFile(os.path.join(root, file)))
+        self.save()
+
+    def add_file(self, path: str = None, checksum: str = None, size: int = None, file: DataValidationFile = None):
+        """ add a validation file object to the database """
+        if file:
+            self.db.append(file)
+        else:
+            self.db.append(self.DVFile(path=path, checksum=checksum, size=size))
+
+    def get_matches(self,
+                    file: DataValidationFile = None,
+                    path: str = None,
+                    size: int = None,
+                    checksum: str = None) -> List[DataValidationFile]:
+        """search database for entries that match any of the given arguments 
+        """
+        #! for now we only return equality of File(checksum + size)
+        # TODO add partial equalities (see DataValidationDB.__doc__)
+        if file and self.db.count(file) > 1:
+            return [f in self.db for f in self.db if f == file]
+
+        if path:
+            name = os.path.basename(path)
+            parent = os.path.dirname(path)
+
+        elif size or checksum or (name and dir):
+            return [
+                f in self.db \
+                    for f in self.db \
+                        if f.size == size or \
+                            f.checksum == checksum or \
+                            (f.name == name and f.parent == parent)
+            ]
+
+
+"""
 x = DataValidationFileCRC32(
     path=
     R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
 )
+
 print(x)
 print(x.path)
 print(x.checksum)
 print(x.mouse_id)
 print(x.relative_path)
+
+y = DataValidationFileCRC32(checksum=x.checksum, size=x.size - 1, path="/dir/1190290940_611166_20220708_foo.png")
+print(x == y)
+"""
