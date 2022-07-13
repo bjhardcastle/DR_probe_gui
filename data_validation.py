@@ -1,4 +1,4 @@
-""" data integrity database classes """
+""" data integrity database class stuff """
 
 import abc
 import dataclasses
@@ -7,17 +7,50 @@ import os
 import pathlib
 import pdb
 import re
+import sys
 import tempfile
 import zlib
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+"""
+
+
+def progressbar(it, prefix="", size=40, file=sys.stdout, units: str = None, unit_scaler: int = None):
+    # from https://stackoverflow.com/a/34482761
+    count = len(it)
+
+    if unit_scaler and unit_scaler > count:
+        display = False
+    else:
+        display = True
+
+    def show(j):
+        if display:
+            x = int(size * j / (count if count != 0 else 1))
+            file.write("%s[%s%s] %i/%i %s\r" % (prefix, "#" * x, "." *
+                                                (size-x), j * unit_scaler, count * unit_scaler, units or ""))
+            file.flush()
+
+    for i, item in enumerate(it):
+        yield item
+        show(i + 1)
+    if display:
+        file.write("\n")
+        file.flush()
 
 
 def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
     """ generate crc32 with for loop to read large files in chunks """
+
+    chunk_size = 65536 # bytes
+
     crc = 0
-    with open(str(fpath), 'rb', 65536) as ins:
-        for _ in range(int((os.stat(fpath).st_size / 65536)) + 1):
-            crc = zlib.crc32(ins.read(65536), crc)
+    with open(str(fpath), 'rb', chunk_size) as ins:
+        for _ in progressbar(range(int((os.stat(fpath).st_size / chunk_size)) + 1),
+                             prefix="generating crc32 checksum ",
+                             units="B",
+                             unit_scaler=chunk_size):
+            crc = zlib.crc32(ins.read(chunk_size), crc)
+
     return '%08X' % (crc & 0xFFFFFFFF)
 
 
@@ -139,7 +172,8 @@ class DataValidationFile(abc.ABC):
     checksum_threshold: int = 50 * 1024**2
     # filesizes below this will have checksums auto-generated on init
 
-    checksum_name: str = None # e.g. 'crc32'
+    checksum_name: str = None
+    # used to identify the checksum type in the databse, e.g. a key in a dict
 
     checksum_generator: Callable[[str], str] = NotImplementedError()
     # implementation of algorithm for generating checksums, accepts a path and
@@ -200,6 +234,7 @@ class DataValidationFile(abc.ABC):
     @classmethod
     def generate_checksum(cls, path: str = None) -> str:
         cls.checksum_test(cls.checksum_generator)
+        print('generating checksum...')
         return cls.checksum_generator(path)
 
     @property
@@ -211,7 +246,7 @@ class DataValidationFile(abc.ABC):
     @checksum.setter
     def checksum(self, value: str):
         if self.__class__.checksum_validate(value):
-            # print(f"setting {self.checksum_name} checksum: {value}")
+            print(f"setting {self.checksum_name} checksum: {value}")
             self._checksum = value
         else:
             raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
@@ -228,7 +263,8 @@ class CRC32DataValidationFile(DataValidationFile, SessionFile):
 
     # DB: DataValidationDB = CRC32JsonDataValidationDB()
 
-    checksum_name: str = "CRC32"
+    checksum_name: str = "crc32"
+    # used to identify the checksum type in the databse, e.g. a key in a dict
 
     checksum_generator: Callable[[str], str] = chunk_crc32
     # implementation of algorithm for generating checksums, accept a path and return a checksum
@@ -382,7 +418,8 @@ class CRC32JsonDataValidationDB(DataValidationDB):
                     path = items[item]['windows']
                 else:
                     path = None
-                checksum = items[item]['crc32'] if 'crc32' in keys else None
+                checksum = items[item][self.DVFile.checksum_name] \
+                    if self.DVFile.checksum_name in keys else None
                 size = items[item]['size'] if 'size' in keys else None
                 self.add_file(file=self.DVFile(path, checksum, size))
 
@@ -402,7 +439,7 @@ class CRC32JsonDataValidationDB(DataValidationDB):
             }
 
             if file.checksum:
-                item[item_name]['crc32'] = file.checksum
+                item[item_name][self.DVFile.checksum_name] = file.checksum
 
             if file.size:
                 item[item_name]['size'] = file.size
@@ -453,19 +490,3 @@ class CRC32JsonDataValidationDB(DataValidationDB):
                             (f.name == name and f.parent == parent)
             ]
 
-
-"""
-x = DataValidationFileCRC32(
-    path=
-    R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
-)
-
-print(x)
-print(x.path)
-print(x.checksum)
-print(x.mouse_id)
-print(x.relative_path)
-
-y = DataValidationFileCRC32(checksum=x.checksum, size=x.size - 1, path="/dir/1190290940_611166_20220708_foo.png")
-print(x == y)
-"""
