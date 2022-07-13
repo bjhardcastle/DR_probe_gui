@@ -21,6 +21,8 @@ print(db.path)
 
 # to see large checksum performance (~400GB file)
 db.DVFile.generate_checksum("//allen/programs/mindscope/production/incoming/recording_slot3_2.npx2")
+"""
+
 import abc
 import dataclasses
 import json
@@ -32,7 +34,7 @@ import sys
 import tempfile
 import zlib
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-"""
+
 
 
 def progressbar(it, prefix="", size=40, file=sys.stdout, units: str = None, unit_scaler: int = None):
