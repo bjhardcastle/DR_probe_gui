@@ -1,5 +1,26 @@
-""" data integrity database class stuff """
+""" data integrity database class stuff 
 
+
+some example usage:
+
+x = DataValidationFileCRC32(
+    path=
+    R"\\allen\programs\mindscope\workgroups\np-exp\1190290940_611166_20220708\1190258206_611166_20220708_surface-image1-left.png"
+)
+print(f"checksum auto-generated for small files: {x.checksum=})
+
+y = DataValidationFileCRC32(checksum=x.checksum, size=x.size, path="/dir/1190290940_611166_20220708_foo.png")
+
+# DataValidationFile objects evaulate to True if they have the same checksum and size
+print(x == y)
+
+db = data_validation.CRC32JsonDataValidationDB()
+db.add_file(x)
+db.save()
+print(db.path)
+
+# to see large checksum performance (~400GB file)
+db.DVFile.generate_checksum("//allen/programs/mindscope/production/incoming/recording_slot3_2.npx2")
 import abc
 import dataclasses
 import json
@@ -489,4 +510,3 @@ class CRC32JsonDataValidationDB(DataValidationDB):
                             f.checksum == checksum or \
                             (f.name == name and f.parent == parent)
             ]
-
