@@ -33,18 +33,19 @@ import re
 import sys
 import tempfile
 import zlib
+from multiprocessing.sharedctypes import Value
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 
-
-def progressbar(it, prefix="", size=40, file=sys.stdout, units: str = None, unit_scaler: int = None):
+def progressbar(it,
+                prefix="",
+                size=40,
+                file=sys.stdout,
+                units: str = None,
+                unit_scaler: int = None,
+                display: bool = True):
     # from https://stackoverflow.com/a/34482761
     count = len(it)
-
-    if unit_scaler and unit_scaler > count:
-        display = False
-    else:
-        display = True
 
     def show(j):
         if display:
@@ -66,12 +67,16 @@ def chunk_crc32(fpath: Union[str, pathlib.Path]) -> str:
 
     chunk_size = 65536 # bytes
 
+    # don't show progress bar for small files
+    display = True if os.stat(fpath).st_size > 10 * chunk_size else False
+
     crc = 0
     with open(str(fpath), 'rb', chunk_size) as ins:
         for _ in progressbar(range(int((os.stat(fpath).st_size / chunk_size)) + 1),
                              prefix="generating crc32 checksum ",
                              units="B",
-                             unit_scaler=chunk_size):
+                             unit_scaler=chunk_size,
+                             display=display):
             crc = zlib.crc32(ins.read(chunk_size), crc)
 
     return '%08X' % (crc & 0xFFFFFFFF)
@@ -172,9 +177,8 @@ class SessionFile:
                 self.relative_path = str(session_relative_path)
 
         else:
-            print(ValueError(f"{self.__class__}: path does not contain a session ID {path=}"))
+            raise ValueError(f"{self.__class__}: path does not contain a session ID {path=}")
 
-    # TODO add inequality method for sorting by sessionID
     def __lt__(self, other):
         if self.session_id == other.session_id:
             return self.relative_path < other.relative_path
@@ -257,7 +261,6 @@ class DataValidationFile(abc.ABC):
     @classmethod
     def generate_checksum(cls, path: str = None) -> str:
         cls.checksum_test(cls.checksum_generator)
-        print('generating checksum...')
         return cls.checksum_generator(path)
 
     @property
@@ -275,7 +278,7 @@ class DataValidationFile(abc.ABC):
             raise ValueError(f"{self.__class__}: trying to set an invalid {self.checksum_name} checksum")
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(path=r'{self.path}', checksum='{self.checksum}', size={self.size})"
+        return f"(path='{self.path or ''}, checksum={self.checksum or ''}, size={self.size or ''})"
 
     def __eq__(self, other):
         # print("Testing checksum equality and filesize equality:")
@@ -300,8 +303,9 @@ class CRC32DataValidationFile(DataValidationFile, SessionFile):
     # a function that accepts a string and validates it conforms to the checksum format, returning boolean
 
     def __init__(self, path: str = None, checksum: str = None, size: int = None):
+        # if the path doesn't contain a session_id, this will raise an error:
         SessionFile.__init__(self, path)
-        DataValidationFile.__init__(self, path, checksum, size)
+        DataValidationFile.__init__(self, path=path, checksum=checksum, size=size)
 
 
 class DataValidationFolder:
@@ -425,26 +429,82 @@ class CRC32JsonDataValidationDB(DataValidationDB):
     def load(self, path: str = None):
         """ load the database from disk """
 
-        path = path or self.path
+        # persistence in notebooks causes db to grow every exection
+        if self.db:
+            self.db = []
 
-        if os.path.exists(path):
+        if not path:
+            path = self.path
+
+        if os.path.basename(path) == 'checksums.sums' \
+            or os.path.splitext(path)[-1] == '.sums':
+            # this is a text file exported by openhashtab
+
+            # first line might be a header (optional)
+            """
+            crc32#implant_info.json#1970.01.01@00.00:00
+            C8D91EAB *implant_info.json
+            crc32#check_crc32_db.py#1970.01.01@00.00:00
+            427608DB *check_crc32_db.py
+            ...
+            """
+            root = pathlib.Path(path).parent.as_posix()
 
             with open(path, 'r') as f:
-                items = json.load(f)
+                lines = f.readlines()
 
-            for item in items:
-                keys = items[item].keys()
+            if not ("@" or "1970") in lines[0]:
+                # this is probably a header line, skip it
+                lines = lines[1:]
 
-                if 'posix' in keys or 'linux' in keys:
-                    path = items[item]['posix' or 'linux']
-                elif 'windows' in keys:
-                    path = items[item]['windows']
-                else:
-                    path = None
-                checksum = items[item][self.DVFile.checksum_name] \
-                    if self.DVFile.checksum_name in keys else None
-                size = items[item]['size'] if 'size' in keys else None
-                self.add_file(file=self.DVFile(path, checksum, size))
+            for idx in range(0, len(lines), 2):
+                line0 = lines[idx].rstrip()
+                line1 = lines[idx + 1].rstrip()
+
+                if "crc32" in line0:
+                    crc32, *args = line1.split(' ')
+                    filename = ' '.join(args)
+
+                    if filename[0] == "*":
+                        filename = filename[1:]
+                    path = '/'.join([root, filename])
+
+                    try:
+                        file = self.DVFile(path=path, checksum=crc32)
+                        self.add_file(file=file)
+                    except ValueError as e:
+                        print('skipping file with no session_id')
+                        # return
+
+        else:
+            # this is one of my simple flat json databases - exact format
+            # changed frequently, try to account for all possibilities
+
+            if os.path.exists(path):
+
+                with open(path, 'r') as f:
+                    items = json.load(f)
+
+                for item in items:
+                    keys = items[item].keys()
+
+                    if 'posix' in keys or 'linux' in keys:
+                        path = items[item]['posix' or 'linux']
+                    elif 'windows' in keys:
+                        path = items[item]['windows']
+                    else:
+                        path = None
+
+                    checksum = items[item][self.DVFile.checksum_name] \
+                        if self.DVFile.checksum_name in keys else None
+                    size = items[item]['size'] if 'size' in keys else None
+
+                    try:
+                        file = self.DVFile(path=path, checksum=crc32, size=size)
+                        self.add_file(file=file)
+                    except ValueError as e:
+                        print('skipping file with no session_id')
+                        # return
 
     def save(self):
         """ save the database to disk as json file """
@@ -478,15 +538,17 @@ class CRC32JsonDataValidationDB(DataValidationDB):
             for file in files:
                 if filter and isinstance(filter, str) and filter not in file:
                     continue
-                self.add_file(file=self.DVFile(os.path.join(root, file)))
+                file = self.DVFile(os.path.join(root, file))
+                self.add_file(file=file)
         self.save()
 
     def add_file(self, path: str = None, checksum: str = None, size: int = None, file: DataValidationFile = None):
         """ add a validation file object to the database """
-        if file:
-            self.db.append(file)
-        else:
-            self.db.append(self.DVFile(path=path, checksum=checksum, size=size))
+
+        if not file:
+            file = self.DVFile(path=path, checksum=checksum, size=size)
+        self.db.append(file)
+        print(f'added {file.session_folder}/{file.name} to database (not saved)')
 
     def get_matches(self,
                     file: DataValidationFile = None,
@@ -496,19 +558,29 @@ class CRC32JsonDataValidationDB(DataValidationDB):
         """search database for entries that match any of the given arguments 
         """
         #! for now we only return equality of File(checksum + size)
-        # TODO add partial equalities (see DataValidationDB.__doc__)
-        if file and self.db.count(file) > 1:
-            return [f in self.db for f in self.db if f == file]
+        # or partial matches based on other input arguments
+        
+        # TODO return index of match/partial match, plus an enum (or similar) indicating the type of match (see DataValidationDB.__doc__)
+        if file and self.db.count(file):
+            return [self.db.index(f) for f in self.db if f == file]
 
-        if path:
+        elif path:
             name = os.path.basename(path)
-            parent = os.path.dirname(path)
+            parent = pathlib.Path(path).parent.parts[-1]
 
-        elif size or checksum or (name and dir):
-            return [
-                f in self.db \
-                    for f in self.db \
-                        if f.size == size or \
-                            f.checksum == checksum or \
-                            (f.name == name and f.parent == parent)
-            ]
+            session_folders = re.search(SessionFile.session_reg_exp, path)
+            session_folder = session_folders[0] if session_folders else None
+
+            if not size:
+                size = os.path.getsize(path)
+
+            # extract session_id from path if possible and add to comparison
+            if size or checksum or (name and parent) or (session_folder and size):
+                return [
+                    self.db.index(f) \
+                        for f in self.db \
+                            if f.size == size or \
+                                f.checksum == checksum or \
+                                (f.name == name and f.parent == parent) or \
+                                    (f.session_folder == session_folder and f.size == size)
+                ]
